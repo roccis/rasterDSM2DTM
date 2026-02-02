@@ -162,7 +162,7 @@ def create_mapbox_raster_figure(raster_path, title, mapbox_token):
     fig = px.scatter_mapbox(
         lat=[center_lat],
         lon=[center_lon],
-        zoom=12,
+        zoom=17,
     )
     fig.update_layout(
         mapbox_style="satellite",
