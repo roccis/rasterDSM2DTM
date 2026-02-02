@@ -9,6 +9,8 @@ from rasterio.warp import transform_bounds
 from PIL import Image
 import plotly.graph_objects as go
 import plotly.express as px
+import base64
+import io
 
 def dsm_to_dtm_metric(input_path, output_path, search_radius_meters=10.0):
     """
@@ -118,6 +120,26 @@ def get_raster_data(raster_path):
         return data, lons, lats, bounds
 
 
+def raster_to_png_data_uri(data):
+    """Convert raster array to a PNG data URI for Mapbox image layer."""
+    data = data.astype(np.float32)
+    valid_mask = ~np.isnan(data)
+    if not np.any(valid_mask):
+        raise ValueError("No valid data in raster")
+
+    vmin = np.nanpercentile(data, 2)
+    vmax = np.nanpercentile(data, 98)
+    scaled = np.zeros_like(data, dtype=np.uint8)
+    scaled[valid_mask] = np.clip((data[valid_mask] - vmin) / (vmax - vmin) * 255, 0, 255).astype(np.uint8)
+
+    rgb = np.stack([scaled, scaled, scaled], axis=2)
+    img = Image.fromarray(rgb)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    encoded = base64.b64encode(buf.getvalue()).decode("utf-8")
+    return f"data:image/png;base64,{encoded}"
+
+
 # Streamlit App
 st.set_page_config(page_title="DSM to DTM Converter", layout="wide")
 
@@ -191,39 +213,40 @@ if uploaded_file is not None:
                 # Visualization section
                 st.header("📊 Results Visualization")
                 
-                # Get raster data with proper lat/lon coordinates
+                # Get raster data with proper lat/lon bounds
                 dsm_data, lons, lats, bounds = get_raster_data(input_path)
                 center_lon = (bounds[0] + bounds[2]) / 2
                 center_lat = (bounds[1] + bounds[3]) / 2
-                
-                # Create Plotly figure with Mapbox
-                fig = go.Figure()
-                
-                # Add heatmap layer for the raster with proper lat/lon coordinates
-                fig.add_trace(go.Heatmap(
-                    z=dsm_data,
-                    x=lons,
-                    y=lats,
-                    colorscale='Viridis',
-                    name='DSM',
-                    colorbar=dict(title="Elevation (m)"),
-                    hovertemplate='<b>Lat:</b> %{y:.4f}<br><b>Lon:</b> %{x:.4f}<br><b>Elevation:</b> %{z:.2f}m<extra></extra>'
-                ))
-                
-                # Update layout with mapbox
-                fig.update_layout(
-                    mapbox=dict(
-                        style="mapbox://styles/mapbox/satellite-v9",
-                        center=dict(lon=center_lon, lat=center_lat),
-                        zoom=12,
-                    ),
-                    height=600,
-                    hovermode='closest',
-                    title='DSM Visualization',
-                    xaxis_title='Longitude',
-                    yaxis_title='Latitude',
+
+                # Build raster image overlay
+                image_uri = raster_to_png_data_uri(dsm_data)
+                west, south, east, north = bounds
+                image_layer = {
+                    "sourcetype": "image",
+                    "source": image_uri,
+                    "coordinates": [
+                        [west, north],
+                        [east, north],
+                        [east, south],
+                        [west, south]
+                    ],
+                    "opacity": 0.7
+                }
+
+                # Initialize mapbox with plotly express
+                fig = px.scatter_mapbox(
+                    lat=[center_lat],
+                    lon=[center_lon],
+                    zoom=12,
                 )
-                
+                fig.update_layout(
+                    mapbox_style="satellite",
+                    mapbox_accesstoken=MAPBOX_TOKEN,
+                    mapbox_layers=[image_layer],
+                    margin=dict(l=0, r=0, t=0, b=0),
+                    height=600,
+                )
+
                 st.plotly_chart(fig, use_container_width=True)
                 
                 # Download buttons
