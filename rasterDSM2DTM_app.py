@@ -80,6 +80,15 @@ def presigned_post(key, expires=900):
 def download_from_s3(key, local_path):
     s3_client.download_file(bucket_name, key, local_path)
 
+
+def check_s3_object_exists(key):
+    """Check if an object exists in S3"""
+    try:
+        s3_client.head_object(Bucket=bucket_name, Key=key)
+        return True
+    except:
+        return False
+
 # Streamlit App
 st.set_page_config(page_title="DSM to DTM Converter", layout="wide")
 
@@ -149,24 +158,36 @@ else:
     components.html(upload_html, height=120)
 
     st.info("After uploading, click 'Process DSM' below to load from S3.")
+    
+    # Check if file was uploaded
+    if check_s3_object_exists(direct_s3_key):
+        st.success(f"✅ File found in S3: {direct_s3_key}")
+    else:
+        st.warning("⚠️ File not yet uploaded to S3. Upload using the form above.")
 
-if uploaded_file is not None or direct_s3_key is not None:
-    # Create temporary files
-    with tempfile.NamedTemporaryFile(delete=False, suffix='.tif') as tmp_input:
-        if uploaded_file is not None:
-            tmp_input.write(uploaded_file.getvalue())
-            input_path = tmp_input.name
-        else:
-            input_path = tmp_input.name
-            download_from_s3(direct_s3_key, input_path)
-    
-    with tempfile.NamedTemporaryFile(delete=False, suffix='.tif') as tmp_output:
-        output_path = tmp_output.name
-    
+# Only show processing if we have a file
+can_process = uploaded_file is not None or (direct_s3_key is not None and check_s3_object_exists(direct_s3_key))
+
+if can_process:
     # Process button
     if st.button("🚀 Process DSM", type="primary"):
         with st.spinner(f"Processing with {window_size}m window..."):
             try:
+                # Create temporary files and load data
+                with tempfile.NamedTemporaryFile(delete=False, suffix='.tif') as tmp_input:
+                    if uploaded_file is not None:
+                        tmp_input.write(uploaded_file.getvalue())
+                        input_path = tmp_input.name
+                    else:
+                        input_path = tmp_input.name
+                
+                # Download from S3 if using direct upload
+                if uploaded_file is None and direct_s3_key is not None:
+                    download_from_s3(direct_s3_key, input_path)
+                
+                with tempfile.NamedTemporaryFile(delete=False, suffix='.tif') as tmp_output:
+                    output_path = tmp_output.name
+                
                 ensure_lifecycle_rule(bucket_name, bucket_prefix, expiry_days)
                 session_id = f"{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}_{uuid.uuid4().hex[:8]}"
 
@@ -256,9 +277,9 @@ if uploaded_file is not None or direct_s3_key is not None:
             
             finally:
                 # Cleanup temporary files
-                if os.path.exists(input_path):
+                if 'input_path' in locals() and os.path.exists(input_path):
                     os.unlink(input_path)
-                if os.path.exists(output_path):
+                if 'output_path' in locals() and os.path.exists(output_path):
                     os.unlink(output_path)
 else:
     st.info("👆 Upload a DSM GeoTIFF file to get started")
