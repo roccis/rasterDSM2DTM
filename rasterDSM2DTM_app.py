@@ -53,16 +53,31 @@ def ensure_lifecycle_rule(bucket, prefix, days):
 
 
 def upload_to_s3(local_path, key, content_type="application/octet-stream"):
-    tagging = f"app=rasterdsm2dtm&delete_after_days={expiry_days}"
-    s3_client.upload_file(
-        local_path,
-        bucket_name,
-        key,
-        ExtraArgs={
-            "ContentType": content_type,
-            "Tagging": tagging,
-        },
-    )
+    try:
+        # Try with tagging first
+        tagging = f"app=rasterdsm2dtm&delete_after_days={expiry_days}"
+        s3_client.upload_file(
+            local_path,
+            bucket_name,
+            key,
+            ExtraArgs={
+                "ContentType": content_type,
+                "Tagging": tagging,
+            },
+        )
+    except Exception as e:
+        # If tagging fails (permission denied), upload without tags
+        if "PutObjectTagging" in str(e) or "AccessDenied" in str(e):
+            s3_client.upload_file(
+                local_path,
+                bucket_name,
+                key,
+                ExtraArgs={
+                    "ContentType": content_type,
+                },
+            )
+        else:
+            raise e
     return f"s3://{bucket_name}/{key}"
 
 
@@ -207,9 +222,6 @@ else:
         </form>
         <div id="status" class="upload-status status-waiting">
             📋 Select a file and click Upload to S3
-        </div>
-        <div style="margin-top: 10px; font-size: 12px; color: #666;">
-            <strong>S3 Key:</strong> {direct_s3_key}
         </div>
     </div>
     <script>
