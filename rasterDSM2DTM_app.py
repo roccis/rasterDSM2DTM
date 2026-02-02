@@ -205,9 +205,12 @@ else:
             background: #ccc;
             cursor: not-allowed;
         }}
+        #upload-frame {{
+            display: none;
+        }}
     </style>
     <div class="upload-container">
-        <form id="s3-upload-form" action="{presigned['url']}" method="post" enctype="multipart/form-data">
+        <form id="s3-upload-form" action="{presigned['url']}" method="post" enctype="multipart/form-data" target="upload-frame">
             {''.join([f'<input type="hidden" name="{k}" value="{v}">' for k, v in presigned['fields'].items()])}
             <div>
                 <label for="file-input" style="font-size: 16px;">📁 Choose GeoTIFF file:</label><br>
@@ -215,6 +218,7 @@ else:
             </div>
             <input type="submit" id="submit-btn" value="⬆️ Upload to S3" />
         </form>
+        <iframe name="upload-frame" id="upload-frame"></iframe>
         <div id="status" class="upload-status status-waiting">
             📋 Select a file and click Upload to S3
         </div>
@@ -224,6 +228,7 @@ else:
         const fileInput = document.getElementById('file-input');
         const submitBtn = document.getElementById('submit-btn');
         const status = document.getElementById('status');
+        const uploadFrame = document.getElementById('upload-frame');
         
         fileInput.addEventListener('change', function() {{
             if (this.files.length > 0) {{
@@ -238,21 +243,40 @@ else:
             submitBtn.disabled = true;
             status.className = 'upload-status status-uploading';
             status.innerHTML = '⏳ Uploading to S3... Please wait';
+            
+            // Poll the hidden iframe for completion
+            let pollCount = 0;
+            const pollInterval = setInterval(function() {{
+                pollCount++;
+                try {{
+                    const frameContent = uploadFrame.contentDocument || uploadFrame.contentWindow.document;
+                    const frameText = frameContent.body ? frameContent.body.textContent : '';
+                    
+                    // Check if S3 responded (XML response contains these)
+                    if (frameText.includes('PostResponse') || 
+                        frameText.includes('ETag') ||
+                        frameText.includes('Location') ||
+                        pollCount > 60) {{
+                        clearInterval(pollInterval);
+                        status.className = 'upload-status status-success';
+                        status.innerHTML = '✅ Upload complete! Redirecting...';
+                        setTimeout(function() {{
+                            window.top.location.href = window.top.location.pathname + '?uploaded=true';
+                        }}, 1000);
+                    }}
+                }} catch (e) {{
+                    // Cross-origin issues - just timeout after 2 minutes
+                    if (pollCount > 60) {{
+                        clearInterval(pollInterval);
+                        status.className = 'upload-status status-success';
+                        status.innerHTML = '✅ Upload should be complete. Redirecting...';
+                        setTimeout(function() {{
+                            window.top.location.href = window.top.location.pathname + '?uploaded=true';
+                        }}, 1000);
+                    }}
+                }}
+            }}, 2000);  // Check every 2 seconds
         }});
-        
-        // Poll for upload completion by checking for S3 response
-        let pollCount = 0;
-        const pollInterval = setInterval(function() {{
-            pollCount++;
-            // After form submission, the page will get an XML response from S3
-            // If we detect that or enough time has passed, trigger reload
-            if (document.body.textContent.includes('PostResponse') || 
-                document.body.textContent.includes('ETag') ||
-                pollCount > 60) {{
-                clearInterval(pollInterval);
-                window.location.href = window.location.pathname + '?uploaded=true';
-            }}
-        }}, 2000);  // Check every 2 seconds
     </script>
     """
     components.html(upload_html, height=280)
