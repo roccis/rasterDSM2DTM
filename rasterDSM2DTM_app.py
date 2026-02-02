@@ -100,29 +100,32 @@ def create_raster_overlay(raster_path, colormap='terrain'):
         data = src.read(1)
         nodata = src.nodata if src.nodata is not None else -9999
         
-        # Mask nodata
+        # Mask nodata for statistics calculation
         data_masked = np.ma.masked_equal(data, nodata)
         
-        # Normalize to 0-255
+        # Normalize to 0-255 using regular array
         vmin, vmax = np.percentile(data_masked.compressed(), [2, 98])
-        normalized = np.clip((data_masked - vmin) / (vmax - vmin) * 255, 0, 255).astype(np.uint8)
+        normalized = np.clip((data.astype(np.float32) - vmin) / (vmax - vmin) * 255, 0, 255).astype(np.uint8)
         
         # Convert to RGB using a colormap
         if colormap == 'terrain':
             # Brown to green gradient
-            r = np.clip(255 - normalized * 0.5, 100, 255).astype(np.uint8)
-            g = np.clip(normalized * 0.8, 100, 200).astype(np.uint8)
-            b = np.clip(normalized * 0.3, 50, 150).astype(np.uint8)
+            r = np.clip(255 - normalized.astype(np.float32) * 0.5, 100, 255).astype(np.uint8)
+            g = np.clip(normalized.astype(np.float32) * 0.8, 100, 200).astype(np.uint8)
+            b = np.clip(normalized.astype(np.float32) * 0.3, 50, 150).astype(np.uint8)
         elif colormap == 'height':
             # Blue to red for height
             r = normalized
-            g = 255 - normalized
-            b = 128
+            g = (255 - normalized).astype(np.uint8)
+            b = np.full_like(normalized, 128)
         else:
             r = g = b = normalized
         
+        # Create alpha channel
+        alpha = np.where(data == nodata, 0, 180).astype(np.uint8)
+        
         # Create RGBA image
-        rgba = np.dstack([r, g, b, np.where(data == nodata, 0, 180)])
+        rgba = np.dstack([r, g, b, alpha])
         
         # Get bounds in lat/lon
         bounds = get_raster_bounds_latlon(raster_path)
