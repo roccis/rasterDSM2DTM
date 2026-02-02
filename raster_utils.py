@@ -96,17 +96,34 @@ def get_raster_bounds_latlon(raster_path):
         return bounds
 
 
-def get_raster_data(raster_path):
-    """Extract raster data and georeferencing info for plotly"""
+def get_raster_data(raster_path, max_dim=2000):
+    """Extract raster data and georeferencing info for plotly.
+    
+    Args:
+        raster_path: Path to raster file
+        max_dim: Maximum dimension for output (will downsample if needed)
+    """
     with rasterio.open(raster_path) as src:
-        data = src.read(1).astype(np.float32)
+        # Calculate downsampling factor if needed
+        height, width = src.height, src.width
+        downsample = max(1, math.ceil(max(height, width) / max_dim))
+        
+        if downsample > 1:
+            # Read with downsampling
+            data = src.read(
+                1,
+                out_shape=(height // downsample, width // downsample),
+                resampling=rasterio.enums.Resampling.average
+            ).astype(np.float32)
+        else:
+            data = src.read(1).astype(np.float32)
+        
         nodata = src.nodata if src.nodata is not None else -9999
         
         # Replace nodata with NaN
         data[data == nodata] = np.nan
         
-        # Get transform and bounds
-        transform = src.transform
+        # Get bounds
         bounds = src.bounds  # (left, bottom, right, top)
         original_crs = src.crs
         
@@ -115,9 +132,9 @@ def get_raster_data(raster_path):
             bounds = transform_bounds(original_crs, 'EPSG:4326', *bounds)
         
         # Create lat/lon grids for the raster
-        height, width = data.shape
-        lons = np.linspace(bounds[0], bounds[2], width)
-        lats = np.linspace(bounds[3], bounds[1], height)  # Note: top to bottom for image coordinates
+        out_height, out_width = data.shape
+        lons = np.linspace(bounds[0], bounds[2], out_width)
+        lats = np.linspace(bounds[3], bounds[1], out_height)  # Note: top to bottom for image coordinates
         
         return data, lons, lats, bounds
 

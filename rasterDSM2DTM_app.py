@@ -243,11 +243,11 @@ else:
         // Check for redirect back (upload complete)
         if (window.location.href.indexOf('key=') > -1) {{
             status.className = 'upload-status status-success';
-            status.innerHTML = '✅ Upload complete! Reloading page...';
-            // Auto-reload to trigger Streamlit to check for file
+            status.innerHTML = '✅ Upload complete! Verifying file availability...';
+            // Wait longer for S3 to finalize large files
             setTimeout(function() {{
-                window.location.href = window.location.pathname;
-            }}, 1500);
+                window.location.href = window.location.pathname + '?uploaded=true';
+            }}, 3000);
         }}
     </script>
     """
@@ -256,7 +256,23 @@ else:
     st.divider()
     
     # Check if file was uploaded
-    if check_s3_object_exists(direct_s3_key):
+    # Add query param check for post-upload verification
+    query_params = st.query_params
+    if query_params.get("uploaded") == "true":
+        with st.spinner("🔍 Verifying file in S3..."):
+            import time
+            # Poll for file existence (S3 eventual consistency)
+            max_attempts = 10
+            for attempt in range(max_attempts):
+                if check_s3_object_exists(direct_s3_key):
+                    st.success(f"✅ **File ready in S3!** Click 'Process DSM' below to continue.")
+                    # Clear the query param
+                    st.query_params.clear()
+                    break
+                time.sleep(1)
+            else:
+                st.error("❌ Could not verify file upload. Please try again or check your S3 bucket.")
+    elif check_s3_object_exists(direct_s3_key):
         st.success(f"✅ **File ready in S3!** Click 'Process DSM' below to continue.")
     else:
         st.info("⏳ Waiting for file upload...")
@@ -267,115 +283,125 @@ can_process = uploaded_file is not None or (direct_s3_key is not None and check_
 if can_process:
     # Process button
     if st.button("🚀 Process DSM", type="primary"):
-        with st.spinner(f"Processing with {window_size}m window..."):
-            try:
-                # Create temporary files and load data
-                with tempfile.NamedTemporaryFile(delete=False, suffix='.tif') as tmp_input:
-                    if uploaded_file is not None:
-                        tmp_input.write(uploaded_file.getvalue())
-                        input_path = tmp_input.name
-                    else:
-                        input_path = tmp_input.name
-                
-                # Download from S3 if using direct upload
-                if uploaded_file is None and direct_s3_key is not None:
-                    download_from_s3(direct_s3_key, input_path)
-                
-                with tempfile.NamedTemporaryFile(delete=False, suffix='.tif') as tmp_output:
-                    output_path = tmp_output.name
-                
-                ensure_lifecycle_rule(bucket_name, bucket_prefix, expiry_days)
-                session_id = f"{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}_{uuid.uuid4().hex[:8]}"
-
-                # Process the DSM
-                dtm_path, chm_path, metadata = dsm_to_dtm_metric(
-                    input_path, 
-                    output_path, 
-                    search_radius_meters=window_size
-                )
-
-                # Upload original and outputs to S3
-                dsm_key = direct_s3_key or f"{bucket_prefix}/{session_id}/dsm.tif"
-                dtm_key = f"{bucket_prefix}/{session_id}/dtm.tif"
-                chm_key = f"{bucket_prefix}/{session_id}/chm.tif"
-
+        progress_bar = st.progress(0, "Preparing...")
+        try:
+            # Create temporary files and load data
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.tif') as tmp_input:
                 if uploaded_file is not None:
-                    dsm_s3 = upload_to_s3(input_path, dsm_key, content_type="image/tiff")
+                    tmp_input.write(uploaded_file.getvalue())
+                    input_path = tmp_input.name
                 else:
-                    dsm_s3 = f"s3://{bucket_name}/{dsm_key}"
-                dtm_s3 = upload_to_s3(dtm_path, dtm_key, content_type="image/tiff")
-                chm_s3 = upload_to_s3(chm_path, chm_key, content_type="image/tiff")
-                
-                st.success("✅ Processing complete!")
-                
-                # Display metadata
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    st.metric("Resolution", f"{metadata['resolution']:.2f}m")
-                with col2:
-                    st.metric("Window (pixels)", metadata['window_pixels'])
-                with col3:
-                    st.metric("Window (meters)", f"{metadata['window_meters']:.1f}m")
-                
-                # Visualization section
-                st.header("📊 Results Visualization")
-                
-                tab1, tab2, tab3 = st.tabs(["📍 DSM", "🏔️ DTM", "🌳 CHM"])
-
-                with tab1:
-                    fig = create_mapbox_raster_figure(input_path, "DSM", MAPBOX_TOKEN)
-                    st.plotly_chart(fig, use_container_width=True)
-
-                with tab2:
-                    fig = create_mapbox_raster_figure(dtm_path, "DTM", MAPBOX_TOKEN)
-                    st.plotly_chart(fig, use_container_width=True)
-
-                with tab3:
-                    fig = create_mapbox_raster_figure(chm_path, "CHM", MAPBOX_TOKEN)
-                    st.plotly_chart(fig, use_container_width=True)
-
-                st.subheader("☁️ Stored in S3")
-                st.write(f"DSM: {dsm_s3}")
-                st.write(f"DTM: {dtm_s3}")
-                st.write(f"CHM: {chm_s3}")
-
-                st.subheader("🔗 Temporary download links")
-                st.write(presigned_url(dsm_key))
-                st.write(presigned_url(dtm_key))
-                st.write(presigned_url(chm_key))
-                
-                # Download buttons
-                st.header("💾 Download Results")
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    with open(dtm_path, 'rb') as f:
-                        st.download_button(
-                            label="📥 Download DTM",
-                            data=f,
-                            file_name="dtm.tif",
-                            mime="image/tiff"
-                        )
-                
-                with col2:
-                    with open(chm_path, 'rb') as f:
-                        st.download_button(
-                            label="📥 Download CHM",
-                            data=f,
-                            file_name="chm.tif",
-                            mime="image/tiff"
-                        )
-                
-            except Exception as e:
-                st.error(f"❌ Error processing file: {str(e)}")
-                import traceback
-                st.error(traceback.format_exc())
+                    input_path = tmp_input.name
             
-            finally:
-                # Cleanup temporary files
-                if 'input_path' in locals() and os.path.exists(input_path):
-                    os.unlink(input_path)
-                if 'output_path' in locals() and os.path.exists(output_path):
-                    os.unlink(output_path)
+            # Download from S3 if using direct upload
+            if uploaded_file is None and direct_s3_key is not None:
+                progress_bar.progress(10, "📥 Downloading file from S3...")
+                download_from_s3(direct_s3_key, input_path)
+            
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.tif') as tmp_output:
+                output_path = tmp_output.name
+            
+            progress_bar.progress(20, "⚙️ Setting up S3...")
+            ensure_lifecycle_rule(bucket_name, bucket_prefix, expiry_days)
+            session_id = f"{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}_{uuid.uuid4().hex[:8]}"
+
+            # Process the DSM
+            progress_bar.progress(30, f"🔄 Processing DSM (window={window_size}m)... This may take several minutes for large files.")
+            dtm_path, chm_path, metadata = dsm_to_dtm_metric(
+                input_path, 
+                output_path, 
+                search_radius_meters=window_size
+            )
+
+            # Upload original and outputs to S3
+            progress_bar.progress(60, "☁️ Uploading results to S3...")
+            dsm_key = direct_s3_key or f"{bucket_prefix}/{session_id}/dsm.tif"
+            dtm_key = f"{bucket_prefix}/{session_id}/dtm.tif"
+            chm_key = f"{bucket_prefix}/{session_id}/chm.tif"
+
+            if uploaded_file is not None:
+                dsm_s3 = upload_to_s3(input_path, dsm_key, content_type="image/tiff")
+            else:
+                dsm_s3 = f"s3://{bucket_name}/{dsm_key}"
+            dtm_s3 = upload_to_s3(dtm_path, dtm_key, content_type="image/tiff")
+            chm_s3 = upload_to_s3(chm_path, chm_key, content_type="image/tiff")
+            
+            progress_bar.progress(80, "🗺️ Generating visualizations...")
+            
+            # Display metadata
+            st.success("✅ Processing complete!")
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Resolution", f"{metadata['resolution']:.2f}m")
+            with col2:
+                st.metric("Window (pixels)", metadata['window_pixels'])
+            with col3:
+                st.metric("Window (meters)", f"{metadata['window_meters']:.1f}m")
+            
+            # Visualization section
+            st.header("📊 Results Visualization")
+            st.info("Large rasters are automatically downsampled for display performance.")
+            
+            tab1, tab2, tab3 = st.tabs(["📍 DSM", "🏔️ DTM", "🌳 CHM"])
+
+            with tab1:
+                fig = create_mapbox_raster_figure(input_path, "DSM", MAPBOX_TOKEN)
+                st.plotly_chart(fig, use_container_width=True)
+
+            with tab2:
+                fig = create_mapbox_raster_figure(dtm_path, "DTM", MAPBOX_TOKEN)
+                st.plotly_chart(fig, use_container_width=True)
+
+            with tab3:
+                fig = create_mapbox_raster_figure(chm_path, "CHM", MAPBOX_TOKEN)
+                st.plotly_chart(fig, use_container_width=True)
+            
+            progress_bar.progress(100, "✅ Complete!")
+
+            st.subheader("☁️ Stored in S3")
+            st.write(f"DSM: {dsm_s3}")
+            st.write(f"DTM: {dtm_s3}")
+            st.write(f"CHM: {chm_s3}")
+
+            st.subheader("🔗 Temporary download links")
+            st.write(presigned_url(dsm_key))
+            st.write(presigned_url(dtm_key))
+            st.write(presigned_url(chm_key))
+            
+            # Download buttons
+            st.header("💾 Download Results")
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                with open(dtm_path, 'rb') as f:
+                    st.download_button(
+                        label="📥 Download DTM",
+                        data=f,
+                        file_name="dtm.tif",
+                        mime="image/tiff"
+                    )
+            
+            with col2:
+                with open(chm_path, 'rb') as f:
+                    st.download_button(
+                        label="📥 Download CHM",
+                        data=f,
+                        file_name="chm.tif",
+                        mime="image/tiff"
+                    )
+                
+        except Exception as e:
+            st.error(f"❌ Error processing file: {str(e)}")
+            import traceback
+            st.error(traceback.format_exc())
+        
+        finally:
+            # Cleanup temporary files
+            if 'input_path' in locals() and os.path.exists(input_path):
+                os.unlink(input_path)
+            if 'output_path' in locals() and os.path.exists(output_path):
+                os.unlink(output_path)
+            if 'progress_bar' in locals():
+                progress_bar.empty()
 else:
     st.info("👆 Upload a DSM GeoTIFF file to get started")
