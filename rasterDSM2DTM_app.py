@@ -140,6 +140,41 @@ def raster_to_png_data_uri(data):
     return f"data:image/png;base64,{encoded}"
 
 
+def create_mapbox_raster_figure(raster_path, title, mapbox_token):
+    dsm_data, _, _, bounds = get_raster_data(raster_path)
+    center_lon = (bounds[0] + bounds[2]) / 2
+    center_lat = (bounds[1] + bounds[3]) / 2
+
+    image_uri = raster_to_png_data_uri(dsm_data)
+    west, south, east, north = bounds
+    image_layer = {
+        "sourcetype": "image",
+        "source": image_uri,
+        "coordinates": [
+            [west, north],
+            [east, north],
+            [east, south],
+            [west, south]
+        ],
+        "opacity": 0.7
+    }
+
+    fig = px.scatter_mapbox(
+        lat=[center_lat],
+        lon=[center_lon],
+        zoom=12,
+    )
+    fig.update_layout(
+        mapbox_style="satellite",
+        mapbox_accesstoken=mapbox_token,
+        mapbox_layers=[image_layer],
+        margin=dict(l=0, r=0, t=30, b=0),
+        height=600,
+        title=title,
+    )
+    return fig
+
+
 # Streamlit App
 st.set_page_config(page_title="DSM to DTM Converter", layout="wide")
 
@@ -213,41 +248,19 @@ if uploaded_file is not None:
                 # Visualization section
                 st.header("📊 Results Visualization")
                 
-                # Get raster data with proper lat/lon bounds
-                dsm_data, lons, lats, bounds = get_raster_data(input_path)
-                center_lon = (bounds[0] + bounds[2]) / 2
-                center_lat = (bounds[1] + bounds[3]) / 2
+                tab1, tab2, tab3 = st.tabs(["📍 DSM", "🏔️ DTM", "🌳 CHM"])
 
-                # Build raster image overlay
-                image_uri = raster_to_png_data_uri(dsm_data)
-                west, south, east, north = bounds
-                image_layer = {
-                    "sourcetype": "image",
-                    "source": image_uri,
-                    "coordinates": [
-                        [west, north],
-                        [east, north],
-                        [east, south],
-                        [west, south]
-                    ],
-                    "opacity": 0.7
-                }
+                with tab1:
+                    fig = create_mapbox_raster_figure(input_path, "DSM", MAPBOX_TOKEN)
+                    st.plotly_chart(fig, use_container_width=True)
 
-                # Initialize mapbox with plotly express
-                fig = px.scatter_mapbox(
-                    lat=[center_lat],
-                    lon=[center_lon],
-                    zoom=12,
-                )
-                fig.update_layout(
-                    mapbox_style="satellite",
-                    mapbox_accesstoken=MAPBOX_TOKEN,
-                    mapbox_layers=[image_layer],
-                    margin=dict(l=0, r=0, t=0, b=0),
-                    height=600,
-                )
+                with tab2:
+                    fig = create_mapbox_raster_figure(dtm_path, "DTM", MAPBOX_TOKEN)
+                    st.plotly_chart(fig, use_container_width=True)
 
-                st.plotly_chart(fig, use_container_width=True)
+                with tab3:
+                    fig = create_mapbox_raster_figure(chm_path, "CHM", MAPBOX_TOKEN)
+                    st.plotly_chart(fig, use_container_width=True)
                 
                 # Download buttons
                 st.header("💾 Download Results")
