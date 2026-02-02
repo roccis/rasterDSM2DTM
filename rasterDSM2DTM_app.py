@@ -84,19 +84,13 @@ def presigned_url(key, expires=3600):
     )
 
 
-def presigned_post(key, expires=900, success_redirect=None):
-    fields = {"success_action_status": "201"}
-    if success_redirect:
-        fields["success_action_redirect"] = success_redirect
-    
+def presigned_post(key, expires=900):
     return s3_client.generate_presigned_post(
         Bucket=bucket_name,
         Key=key,
-        Fields=fields,
         ExpiresIn=expires,
         Conditions=[
             ["content-length-range", 1, 10_000_000_000],
-            {"success_action_status": "201"} if not success_redirect else {"success_action_redirect": success_redirect},
         ],
     )
 
@@ -168,12 +162,7 @@ else:
         st.session_state.direct_s3_key = f"{bucket_prefix}/{session_id}/dsm.tif"
 
     direct_s3_key = st.session_state.direct_s3_key
-    
-    # Generate redirect URL back to the app
-    # Get the current page URL from query params or construct default
-    import urllib.parse
-    redirect_url = f"https://rasterdsm2dtm.streamlit.app/?uploaded=true&key={urllib.parse.quote(direct_s3_key)}"
-    presigned = presigned_post(direct_s3_key, success_redirect=redirect_url)
+    presigned = presigned_post(direct_s3_key)
 
     st.markdown("**Upload directly to S3 (bypasses Streamlit size limit):**")
     
@@ -248,11 +237,22 @@ else:
         form.addEventListener('submit', function(e) {{
             submitBtn.disabled = true;
             status.className = 'upload-status status-uploading';
-            status.innerHTML = '⏳ Uploading to S3... Please wait (do not close this tab)';
+            status.innerHTML = '⏳ Uploading to S3... Please wait';
         }});
         
-        // S3 will redirect back here with uploaded=true parameter
-        // No additional JavaScript check needed - form submission handles redirect
+        // Poll for upload completion by checking for S3 response
+        let pollCount = 0;
+        const pollInterval = setInterval(function() {{
+            pollCount++;
+            // After form submission, the page will get an XML response from S3
+            // If we detect that or enough time has passed, trigger reload
+            if (document.body.textContent.includes('PostResponse') || 
+                document.body.textContent.includes('ETag') ||
+                pollCount > 60) {{
+                clearInterval(pollInterval);
+                window.location.href = window.location.pathname + '?uploaded=true';
+            }}
+        }}, 2000);  // Check every 2 seconds
     </script>
     """
     components.html(upload_html, height=280)
