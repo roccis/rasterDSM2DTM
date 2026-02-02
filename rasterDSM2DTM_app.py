@@ -101,15 +101,21 @@ def get_raster_data(raster_path):
         # Replace nodata with NaN
         data[data == nodata] = np.nan
         
-        # Get transform info
+        # Get transform and bounds
         transform = src.transform
-        bounds = src.bounds
+        bounds = src.bounds  # (left, bottom, right, top)
+        original_crs = src.crs
         
         # Convert bounds to lat/lon if needed
-        if src.crs.to_string() != 'EPSG:4326':
-            bounds = transform_bounds(src.crs, 'EPSG:4326', *bounds)
+        if original_crs.to_string() != 'EPSG:4326':
+            bounds = transform_bounds(original_crs, 'EPSG:4326', *bounds)
         
-        return data, bounds
+        # Create lat/lon grids for the raster
+        height, width = data.shape
+        lons = np.linspace(bounds[0], bounds[2], width)
+        lats = np.linspace(bounds[3], bounds[1], height)  # Note: top to bottom for image coordinates
+        
+        return data, lons, lats, bounds
 
 
 # Streamlit App
@@ -185,20 +191,23 @@ if uploaded_file is not None:
                 # Visualization section
                 st.header("📊 Results Visualization")
                 
-                # Get raster data and bounds
-                dsm_data, bounds = get_raster_data(input_path)
+                # Get raster data with proper lat/lon coordinates
+                dsm_data, lons, lats, bounds = get_raster_data(input_path)
                 center_lon = (bounds[0] + bounds[2]) / 2
                 center_lat = (bounds[1] + bounds[3]) / 2
                 
                 # Create Plotly figure with Mapbox
                 fig = go.Figure()
                 
-                # Add heatmap layer for the raster
+                # Add heatmap layer for the raster with proper lat/lon coordinates
                 fig.add_trace(go.Heatmap(
                     z=dsm_data,
+                    x=lons,
+                    y=lats,
                     colorscale='Viridis',
                     name='DSM',
-                    colorbar=dict(title="Elevation (m)")
+                    colorbar=dict(title="Elevation (m)"),
+                    hovertemplate='<b>Lat:</b> %{y:.4f}<br><b>Lon:</b> %{x:.4f}<br><b>Elevation:</b> %{z:.2f}m<extra></extra>'
                 ))
                 
                 # Update layout with mapbox
@@ -206,10 +215,13 @@ if uploaded_file is not None:
                     mapbox=dict(
                         style="mapbox://styles/mapbox/satellite-v9",
                         center=dict(lon=center_lon, lat=center_lat),
-                        zoom=15,
+                        zoom=12,
                     ),
                     height=600,
                     hovermode='closest',
+                    title='DSM Visualization',
+                    xaxis_title='Longitude',
+                    yaxis_title='Latitude',
                 )
                 
                 st.plotly_chart(fig, use_container_width=True)
