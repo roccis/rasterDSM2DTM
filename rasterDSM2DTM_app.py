@@ -35,13 +35,21 @@ def ensure_lifecycle_rule(bucket, prefix, days):
                 Bucket=bucket,
                 LifecycleConfiguration={"Rules": rules},
             )
-    except s3_client.exceptions.NoSuchLifecycleConfiguration:
-        s3_client.put_bucket_lifecycle_configuration(
-            Bucket=bucket,
-            LifecycleConfiguration={"Rules": [rule]},
-        )
+    except s3_client.exceptions.NoSuchBucket:
+        st.error(f"Bucket {bucket} does not exist")
     except Exception as e:
-        st.warning(f"Could not set lifecycle rule: {e}")
+        # NoSuchLifecycleConfiguration or other errors - try to create new lifecycle config
+        error_code = e.response.get('Error', {}).get('Code', '') if hasattr(e, 'response') else ''
+        if error_code == 'NoSuchLifecycleConfiguration':
+            try:
+                s3_client.put_bucket_lifecycle_configuration(
+                    Bucket=bucket,
+                    LifecycleConfiguration={"Rules": [rule]},
+                )
+            except Exception as put_error:
+                st.warning(f"Could not set lifecycle rule: {put_error}")
+        else:
+            st.warning(f"Could not set lifecycle rule: {e}")
 
 
 def upload_to_s3(local_path, key, content_type="application/octet-stream"):
