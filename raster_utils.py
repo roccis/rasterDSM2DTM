@@ -14,7 +14,7 @@ import base64
 import io
 
 
-def dsm_to_dtm_metric(input_path, output_path, search_radius_meters=10.0):
+def dsm_to_dtm_metric(input_path, output_path, search_radius_meters=10.0, max_pixels=15000000):
     """
     Derives a DTM from a DSM using a metric window size.
     
@@ -22,6 +22,7 @@ def dsm_to_dtm_metric(input_path, output_path, search_radius_meters=10.0):
         input_path: Path to DSM geotiff
         output_path: Path to save DTM geotiff
         search_radius_meters: The physical width of the largest object to remove
+        max_pixels: Maximum number of pixels to process (default 15M = ~3873x3873)
         
     Returns:
         tuple: (dtm_path, chm_path, metadata_dict)
@@ -29,23 +30,45 @@ def dsm_to_dtm_metric(input_path, output_path, search_radius_meters=10.0):
     with rasterio.open(input_path) as src:
         # Get pixel resolution (assuming square pixels in meters)
         res_x, res_y = src.res 
-        dsm = src.read(1)
-        affine = src.transform
+        height, width = src.height, src.width
+        total_pixels = height * width
+        
+        # Calculate downsampling if needed to stay within memory limits
+        downsample = 1
+        if total_pixels > max_pixels:
+            downsample = math.ceil(math.sqrt(total_pixels / max_pixels))
+            out_height = height // downsample
+            out_width = width // downsample
+            # Read with downsampling
+            dsm = src.read(
+                1,
+                out_shape=(out_height, out_width),
+                resampling=rasterio.enums.Resampling.average
+            )
+            # Adjust resolution for downsampled data
+            effective_res_x = res_x * downsample
+            effective_res_y = res_y * downsample
+            # Update transform for downsampled raster
+            from rasterio.transform import Affine
+            affine = src.transform * Affine.scale(downsample, downsample)
+        else:
+            dsm = src.read(1)
+            effective_res_x = res_x
+            effective_res_y = res_y
+            affine = src.transform
+            
         crs = src.crs
         bounds = src.bounds
+        nodata = src.nodata if src.nodata is not None else -9999
 
-        # Calculate window size in pixels (quanta)
-        # We use ceil to ensure the window is 'at least' as large as the radius
-        window_pixels = math.ceil(search_radius_meters / res_x)
+        # Calculate window size in pixels based on effective resolution
+        window_pixels = math.ceil(search_radius_meters / effective_res_x)
         
-        # Ensure window_pixels is odd for a centered kernel (optional but recommended)
+        # Ensure window_pixels is odd for a centered kernel
         if window_pixels % 2 == 0:
             window_pixels += 1
 
         # Handle NoData effectively
-        nodata = src.nodata if src.nodata is not None else -9999
-
-        # Change nodata to np.nan
         dsm_temp = dsm.astype('float32')
         dsm_temp[dsm_temp == nodata] = np.nanmedian(dsm)
 
@@ -56,7 +79,13 @@ def dsm_to_dtm_metric(input_path, output_path, search_radius_meters=10.0):
 
         # Metadata for output
         out_meta = src.meta.copy()
-        out_meta.update(dtype=dtm.dtype, nodata=nodata)
+        out_meta.update(
+            dtype=dtm.dtype,
+            nodata=nodata,
+            height=dtm.shape[0],
+            width=dtm.shape[1],
+            transform=affine
+        )
 
         with rasterio.open(output_path, 'w', **out_meta) as dst:
             dst.write(dtm, 1)
@@ -75,12 +104,15 @@ def dsm_to_dtm_metric(input_path, output_path, search_radius_meters=10.0):
             dst.write(chm, 1)
 
         metadata = {
-            'resolution': res_x,
+            'resolution': effective_res_x,
             'window_pixels': window_pixels,
             'window_meters': search_radius_meters,
             'bounds': bounds,
             'crs': str(crs),
-            'shape': dsm.shape
+            'shape': dsm.shape,
+            'original_shape': (height, width),
+            'downsampled': downsample > 1,
+            'downsample_factor': downsample
         }
 
         return output_path, chm_path, metadata
