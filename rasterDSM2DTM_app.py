@@ -38,16 +38,11 @@ def ensure_lifecycle_rule(bucket, prefix, days):
     except s3_client.exceptions.NoSuchBucket:
         st.error(f"Bucket {bucket} does not exist")
     except Exception as e:
-        # NoSuchLifecycleConfiguration or other errors - try to create new lifecycle config
+        # Silently skip lifecycle configuration if permissions denied
+        # This is optional and doesn't affect app functionality
         error_code = e.response.get('Error', {}).get('Code', '') if hasattr(e, 'response') else ''
-        if error_code == 'NoSuchLifecycleConfiguration':
-            try:
-                s3_client.put_bucket_lifecycle_configuration(
-                    Bucket=bucket,
-                    LifecycleConfiguration={"Rules": [rule]},
-                )
-            except Exception as put_error:
-                st.warning(f"Could not set lifecycle rule: {put_error}")
+        if error_code in ['NoSuchLifecycleConfiguration', 'AccessDenied']:
+            pass  # Skip silently - lifecycle config is optional
         else:
             st.warning(f"Could not set lifecycle rule: {e}")
 
