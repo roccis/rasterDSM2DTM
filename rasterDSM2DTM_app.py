@@ -243,7 +243,11 @@ else:
         // Check for redirect back (upload complete)
         if (window.location.href.indexOf('key=') > -1) {{
             status.className = 'upload-status status-success';
-            status.innerHTML = '✅ Upload complete! Refresh the page and click Process DSM below';
+            status.innerHTML = '✅ Upload complete! Reloading page...';
+            // Auto-reload to trigger Streamlit to check for file
+            setTimeout(function() {{
+                window.location.href = window.location.pathname;
+            }}, 1500);
         }}
     </script>
     """
