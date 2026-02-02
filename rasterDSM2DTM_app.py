@@ -5,6 +5,7 @@ import s3fs
 import boto3
 import uuid
 from datetime import datetime, timezone
+import streamlit.components.v1 as components
 from raster_utils import (
     dsm_to_dtm_metric,
     create_mapbox_raster_figure
@@ -64,6 +65,21 @@ def presigned_url(key, expires=3600):
         ExpiresIn=expires,
     )
 
+
+def presigned_post(key, expires=900):
+    return s3_client.generate_presigned_post(
+        Bucket=bucket_name,
+        Key=key,
+        ExpiresIn=expires,
+        Conditions=[
+            ["content-length-range", 1, 10_000_000_000],
+        ],
+    )
+
+
+def download_from_s3(key, local_path):
+    s3_client.download_file(bucket_name, key, local_path)
+
 # Streamlit App
 st.set_page_config(page_title="DSM to DTM Converter", layout="wide")
 
@@ -96,18 +112,53 @@ with st.sidebar:
     **Window Size**: Larger windows remove bigger objects but may over-smooth terrain.
     """)
 
-# File uploader
-uploaded_file = st.file_uploader(
-    "Upload DSM GeoTIFF",
-    type=['tif', 'tiff'],
-    help="Upload a Digital Surface Model in GeoTIFF format"
+# Upload options
+st.subheader("📤 Upload DSM")
+upload_mode = st.radio(
+    "Choose upload method",
+    ["Direct to S3 (no 200MB limit)", "Upload via Streamlit"],
+    index=0,
 )
 
-if uploaded_file is not None:
+uploaded_file = None
+direct_s3_key = None
+
+if upload_mode == "Upload via Streamlit":
+    uploaded_file = st.file_uploader(
+        "Upload DSM GeoTIFF",
+        type=['tif', 'tiff'],
+        help="Upload a Digital Surface Model in GeoTIFF format"
+    )
+else:
+    if "direct_s3_key" not in st.session_state:
+        session_id = f"{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}_{uuid.uuid4().hex[:8]}"
+        st.session_state.direct_s3_key = f"{bucket_prefix}/{session_id}/dsm.tif"
+
+    direct_s3_key = st.session_state.direct_s3_key
+    presigned = presigned_post(direct_s3_key)
+
+    st.markdown("Upload directly to S3 (bypasses Streamlit size limit):")
+    upload_html = f"""
+    <form action=\"{presigned['url']}\" method=\"post\" enctype=\"multipart/form-data\">
+      {''.join([f'<input type="hidden" name="{k}" value="{v}">' for k, v in presigned['fields'].items()])}
+      <input type=\"file\" name=\"file\" />
+      <input type=\"submit\" value=\"Upload to S3\" />
+    </form>
+    <p><b>Upload key:</b> {direct_s3_key}</p>
+    """
+    components.html(upload_html, height=120)
+
+    st.info("After uploading, click 'Process DSM' below to load from S3.")
+
+if uploaded_file is not None or direct_s3_key is not None:
     # Create temporary files
     with tempfile.NamedTemporaryFile(delete=False, suffix='.tif') as tmp_input:
-        tmp_input.write(uploaded_file.getvalue())
-        input_path = tmp_input.name
+        if uploaded_file is not None:
+            tmp_input.write(uploaded_file.getvalue())
+            input_path = tmp_input.name
+        else:
+            input_path = tmp_input.name
+            download_from_s3(direct_s3_key, input_path)
     
     with tempfile.NamedTemporaryFile(delete=False, suffix='.tif') as tmp_output:
         output_path = tmp_output.name
@@ -127,11 +178,14 @@ if uploaded_file is not None:
                 )
 
                 # Upload original and outputs to S3
-                dsm_key = f"{bucket_prefix}/{session_id}/dsm.tif"
+                dsm_key = direct_s3_key or f"{bucket_prefix}/{session_id}/dsm.tif"
                 dtm_key = f"{bucket_prefix}/{session_id}/dtm.tif"
                 chm_key = f"{bucket_prefix}/{session_id}/chm.tif"
 
-                dsm_s3 = upload_to_s3(input_path, dsm_key, content_type="image/tiff")
+                if uploaded_file is not None:
+                    dsm_s3 = upload_to_s3(input_path, dsm_key, content_type="image/tiff")
+                else:
+                    dsm_s3 = f"s3://{bucket_name}/{dsm_key}"
                 dtm_s3 = upload_to_s3(dtm_path, dtm_key, content_type="image/tiff")
                 chm_s3 = upload_to_s3(chm_path, chm_key, content_type="image/tiff")
                 
