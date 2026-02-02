@@ -5,10 +5,10 @@ from scipy.ndimage import grey_opening
 import math
 import tempfile
 import os
-import pydeck as pdk
-from rasterio.warp import calculate_default_transform, reproject, Resampling
+from rasterio.warp import transform_bounds
 from PIL import Image
-import io
+import plotly.graph_objects as go
+import plotly.express as px
 
 def dsm_to_dtm_metric(input_path, output_path, search_radius_meters=10.0):
     """
@@ -88,49 +88,28 @@ def get_raster_bounds_latlon(raster_path):
         bounds = src.bounds
         # If not in WGS84, reproject bounds
         if src.crs.to_string() != 'EPSG:4326':
-            from rasterio.warp import transform_bounds
             bounds = transform_bounds(src.crs, 'EPSG:4326', *bounds)
         return bounds
 
 
-def create_raster_overlay(raster_path, colormap='terrain'):
-    """Create a bitmap overlay for pydeck"""
+def get_raster_data(raster_path):
+    """Extract raster data and georeferencing info for plotly"""
     with rasterio.open(raster_path) as src:
-        # Read the data
-        data = src.read(1)
+        data = src.read(1).astype(np.float32)
         nodata = src.nodata if src.nodata is not None else -9999
         
-        # Mask nodata for statistics calculation
-        data_masked = np.ma.masked_equal(data, nodata)
+        # Replace nodata with NaN
+        data[data == nodata] = np.nan
         
-        # Normalize to 0-255 using regular array
-        vmin, vmax = np.percentile(data_masked.compressed(), [2, 98])
-        normalized = np.clip((data.astype(np.float32) - vmin) / (vmax - vmin) * 255, 0, 255).astype(np.uint8)
+        # Get transform info
+        transform = src.transform
+        bounds = src.bounds
         
-        # Convert to RGB using a colormap
-        if colormap == 'terrain':
-            # Brown to green gradient
-            r = np.clip(255 - normalized.astype(np.float32) * 0.5, 100, 255).astype(np.uint8)
-            g = np.clip(normalized.astype(np.float32) * 0.8, 100, 200).astype(np.uint8)
-            b = np.clip(normalized.astype(np.float32) * 0.3, 50, 150).astype(np.uint8)
-        elif colormap == 'height':
-            # Blue to red for height
-            r = normalized
-            g = (255 - normalized).astype(np.uint8)
-            b = np.full_like(normalized, 128)
-        else:
-            r = g = b = normalized
+        # Convert bounds to lat/lon if needed
+        if src.crs.to_string() != 'EPSG:4326':
+            bounds = transform_bounds(src.crs, 'EPSG:4326', *bounds)
         
-        # Create alpha channel
-        alpha = np.where(data == nodata, 0, 180).astype(np.uint8)
-        
-        # Create RGBA image
-        rgba = np.dstack([r, g, b, alpha])
-        
-        # Get bounds in lat/lon
-        bounds = get_raster_bounds_latlon(raster_path)
-        
-        return rgba, bounds
+        return data, bounds
 
 
 # Streamlit App
@@ -206,106 +185,34 @@ if uploaded_file is not None:
                 # Visualization section
                 st.header("📊 Results Visualization")
                 
-                # Get bounds for initial view
-                bounds = get_raster_bounds_latlon(input_path)
+                # Get raster data and bounds
+                dsm_data, bounds = get_raster_data(input_path)
                 center_lon = (bounds[0] + bounds[2]) / 2
                 center_lat = (bounds[1] + bounds[3]) / 2
-                    
-                # Create overlays
-                dsm_overlay, dsm_bounds = create_raster_overlay(input_path, 'terrain')
-                dtm_overlay, dtm_bounds = create_raster_overlay(dtm_path, 'terrain')
-                chm_overlay, chm_bounds = create_raster_overlay(chm_path, 'height')
                 
-                # Tabs for different views
-                tab1, tab2, tab3 = st.tabs(["📍 DSM", "🏔️ DTM", "🌳 CHM"])
+                # Create Plotly figure with Mapbox
+                fig = go.Figure()
                 
-                with tab1:
-                    st.subheader("Digital Surface Model (Original)")
-                    
-                    # Save overlay to temporary file
-                    with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as tmp_img:
-                        Image.fromarray(dsm_overlay).save(tmp_img.name)
-                        
-                        layer = pdk.Layer(
-                            "BitmapLayer",
-                            image=tmp_img.name,
-                            bounds=[[dsm_bounds[0], dsm_bounds[1]], [dsm_bounds[2], dsm_bounds[3]]],
-                            opacity=0.7
-                        )
-                        
-                        view_state = pdk.ViewState(
-                            longitude=center_lon,
-                            latitude=center_lat,
-                            zoom=15,
-                            pitch=0
-                        )
-                        
-                        r = pdk.Deck(
-                            layers=[layer],
-                            initial_view_state=view_state,
-                            map_style="mapbox://styles/mapbox/satellite-v9",
-                            mapbox_key=MAPBOX_TOKEN
-                        )
-                        
-                        st.pydeck_chart(r, use_container_width=True)
+                # Add heatmap layer for the raster
+                fig.add_trace(go.Heatmap(
+                    z=dsm_data,
+                    colorscale='Viridis',
+                    name='DSM',
+                    colorbar=dict(title="Elevation (m)")
+                ))
                 
-                with tab2:
-                    st.subheader("Digital Terrain Model (Ground)")
-                    
-                    with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as tmp_img:
-                        Image.fromarray(dtm_overlay).save(tmp_img.name)
-                        
-                        layer = pdk.Layer(
-                            "BitmapLayer",
-                            image=tmp_img.name,
-                            bounds=[[dtm_bounds[0], dtm_bounds[1]], [dtm_bounds[2], dtm_bounds[3]]],
-                            opacity=0.7
-                        )
-                        
-                        view_state = pdk.ViewState(
-                            longitude=center_lon,
-                            latitude=center_lat,
-                            zoom=15,
-                            pitch=0
-                        )
-                        
-                        r = pdk.Deck(
-                            layers=[layer],
-                            initial_view_state=view_state,
-                            map_style="mapbox://styles/mapbox/satellite-v9",
-                            mapbox_key=MAPBOX_TOKEN
-                        )
-                        
-                        st.pydeck_chart(r, use_container_width=True)
+                # Update layout with mapbox
+                fig.update_layout(
+                    mapbox=dict(
+                        style="mapbox://styles/mapbox/satellite-v9",
+                        center=dict(lon=center_lon, lat=center_lat),
+                        zoom=15,
+                    ),
+                    height=600,
+                    hovermode='closest',
+                )
                 
-                with tab3:
-                    st.subheader("Canopy Height Model (DSM - DTM)")
-                    
-                    with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as tmp_img:
-                        Image.fromarray(chm_overlay).save(tmp_img.name)
-                        
-                        layer = pdk.Layer(
-                            "BitmapLayer",
-                            image=tmp_img.name,
-                            bounds=[[chm_bounds[0], chm_bounds[1]], [chm_bounds[2], chm_bounds[3]]],
-                            opacity=0.7
-                        )
-                        
-                        view_state = pdk.ViewState(
-                            longitude=center_lon,
-                            latitude=center_lat,
-                            zoom=15,
-                            pitch=0
-                        )
-                        
-                        r = pdk.Deck(
-                            layers=[layer],
-                            initial_view_state=view_state,
-                            map_style="mapbox://styles/mapbox/satellite-v9",
-                            mapbox_key=MAPBOX_TOKEN
-                        )
-                        
-                        st.pydeck_chart(r, use_container_width=True)
+                st.plotly_chart(fig, use_container_width=True)
                 
                 # Download buttons
                 st.header("💾 Download Results")
@@ -331,6 +238,8 @@ if uploaded_file is not None:
                 
             except Exception as e:
                 st.error(f"❌ Error processing file: {str(e)}")
+                import traceback
+                st.error(traceback.format_exc())
             
             finally:
                 # Cleanup temporary files
@@ -340,16 +249,3 @@ if uploaded_file is not None:
                     os.unlink(output_path)
 else:
     st.info("👆 Upload a DSM GeoTIFF file to get started")
-    
-    # Show example
-    with st.expander("📖 Usage Instructions"):
-        st.markdown("""
-        1. **Upload your DSM**: Click the upload button and select your GeoTIFF file
-        2. **Configure window size**: Use the slider in the sidebar (1-30 meters)
-           - Smaller windows (1-5m): Remove small vegetation
-           - Medium windows (5-15m): Remove trees and small buildings
-           - Large windows (15-30m): Remove large buildings and tree canopies
-        3. **Process**: Click the process button to generate DTM and CHM
-        4. **View results**: Explore the interactive maps in different tabs
-        5. **Download**: Save the generated DTM and CHM files
-        """)
