@@ -121,7 +121,11 @@ def get_raster_data(raster_path):
 
 
 def raster_to_png_data_uri(data):
-    """Convert raster array to a PNG data URI for Mapbox image layer."""
+    """Convert raster array to a PNG data URI for Mapbox image layer.
+
+    Returns:
+        tuple: (data_uri, vmin, vmax)
+    """
     data = data.astype(np.float32)
     valid_mask = ~np.isnan(data)
     if not np.any(valid_mask):
@@ -137,15 +141,15 @@ def raster_to_png_data_uri(data):
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     encoded = base64.b64encode(buf.getvalue()).decode("utf-8")
-    return f"data:image/png;base64,{encoded}"
+    return f"data:image/png;base64,{encoded}", float(vmin), float(vmax)
 
 
-def create_mapbox_raster_figure(raster_path, title, mapbox_token):
+def create_mapbox_raster_figure(raster_path, title, mapbox_token, colorscale="Gray"):
     dsm_data, _, _, bounds = get_raster_data(raster_path)
     center_lon = (bounds[0] + bounds[2]) / 2
     center_lat = (bounds[1] + bounds[3]) / 2
 
-    image_uri = raster_to_png_data_uri(dsm_data)
+    image_uri, vmin, vmax = raster_to_png_data_uri(dsm_data)
     west, south, east, north = bounds
     image_layer = {
         "sourcetype": "image",
@@ -163,6 +167,26 @@ def create_mapbox_raster_figure(raster_path, title, mapbox_token):
         lat=[center_lat],
         lon=[center_lon],
         zoom=17,
+    )
+    # Add a transparent scattermapbox trace to show a colorbar
+    fig.add_trace(
+        go.Scattermapbox(
+            lat=[center_lat, center_lat],
+            lon=[center_lon, center_lon],
+            mode="markers",
+            marker=dict(
+                size=1,
+                opacity=0,
+                color=[vmin, vmax],
+                colorscale=colorscale,
+                cmin=vmin,
+                cmax=vmax,
+                showscale=True,
+                colorbar=dict(title="Elevation (m)"),
+            ),
+            showlegend=False,
+            hoverinfo="skip",
+        )
     )
     fig.update_layout(
         mapbox_style="satellite",
