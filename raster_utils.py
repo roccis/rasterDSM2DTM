@@ -33,6 +33,14 @@ def dsm_to_dtm_metric(input_path, output_path, search_radius_meters=10.0, max_pi
         height, width = src.height, src.width
         total_pixels = height * width
         
+        # Calculate window size in pixels BEFORE downsampling (based on original resolution)
+        # This ensures morphological filtering is consistent regardless of downsampling
+        window_pixels = math.ceil(search_radius_meters / res_x)
+        
+        # Ensure window_pixels is odd for a centered kernel
+        if window_pixels % 2 == 0:
+            window_pixels += 1
+        
         # Calculate downsampling if needed to stay within memory limits
         downsample = 1
         if total_pixels > max_pixels:
@@ -45,34 +53,23 @@ def dsm_to_dtm_metric(input_path, output_path, search_radius_meters=10.0, max_pi
                 out_shape=(out_height, out_width),
                 resampling=rasterio.enums.Resampling.average
             )
-            # Adjust resolution for downsampled data
-            effective_res_x = res_x * downsample
-            effective_res_y = res_y * downsample
             # Update transform for downsampled raster
             from rasterio.transform import Affine
             affine = src.transform * Affine.scale(downsample, downsample)
         else:
             dsm = src.read(1)
-            effective_res_x = res_x
-            effective_res_y = res_y
             affine = src.transform
             
         crs = src.crs
         bounds = src.bounds
         nodata = src.nodata if src.nodata is not None else -9999
 
-        # Calculate window size in pixels based on effective resolution
-        window_pixels = math.ceil(search_radius_meters / effective_res_x)
-        
-        # Ensure window_pixels is odd for a centered kernel
-        if window_pixels % 2 == 0:
-            window_pixels += 1
-
         # Handle NoData effectively
         dsm_temp = dsm.astype('float32')
         dsm_temp[dsm_temp == nodata] = np.nanmedian(dsm)
 
-        # Apply Morphology
+        # Apply Morphology with window size from original resolution
+        # This keeps the filtering consistent even if data is downsampled
         dtm = grey_opening(dsm_temp, size=(window_pixels, window_pixels))
         # After filtering, restore NoData values
         dtm[(dsm == nodata) | np.isnan(dsm)] = nodata
@@ -104,7 +101,7 @@ def dsm_to_dtm_metric(input_path, output_path, search_radius_meters=10.0, max_pi
             dst.write(chm, 1)
 
         metadata = {
-            'resolution': effective_res_x,
+            'resolution': res_x,
             'window_pixels': window_pixels,
             'window_meters': search_radius_meters,
             'bounds': bounds,
