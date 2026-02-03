@@ -162,139 +162,52 @@ else:
         st.session_state.direct_s3_key = f"{bucket_prefix}/{session_id}/dsm.tif"
 
     direct_s3_key = st.session_state.direct_s3_key
-    presigned = presigned_post(direct_s3_key)
-
-    st.markdown("**Upload directly to S3 (bypasses Streamlit size limit):**")
     
+    st.markdown("**Upload directly to S3 (bypasses Streamlit size limit):**")
+    st.info("Open the link below in your browser to upload your file directly to S3")
+    
+    # Generate presigned POST
+    presigned = presigned_post(direct_s3_key)
+    
+    # Create a simple HTML form that opens in a new tab/window
+    upload_url = presigned['url']
+    form_fields = ''.join([f'<input type="hidden" name="{k}" value="{v}">' for k, v in presigned['fields'].items()])
+    
+    # Display the upload form as a simple link-based approach
     upload_html = f"""
-    <style>
-        .upload-container {{
-            border: 2px dashed #ccc;
-            border-radius: 8px;
-            padding: 20px;
-            text-align: center;
-            background: #f9f9f9;
-        }}
-        .upload-status {{
-            margin-top: 15px;
-            padding: 10px;
-            border-radius: 5px;
-            font-weight: bold;
-        }}
-        .status-waiting {{ background: #fff3cd; color: #856404; }}
-        .status-uploading {{ background: #d1ecf1; color: #0c5460; }}
-        .status-success {{ background: #d4edda; color: #155724; }}
-        .status-error {{ background: #f8d7da; color: #721c24; }}
-        input[type="file"] {{
-            margin: 10px 0;
-            padding: 10px;
-        }}
-        input[type="submit"] {{
-            background: #0066cc;
-            color: white;
-            border: none;
-            padding: 12px 24px;
-            border-radius: 5px;
-            cursor: pointer;
-            font-size: 16px;
-        }}
-        input[type="submit"]:hover {{
-            background: #0052a3;
-        }}
-        input[type="submit"]:disabled {{
-            background: #ccc;
-            cursor: not-allowed;
-        }}
-        #upload-frame {{
-            display: none;
-        }}
-    </style>
-    <div class="upload-container">
-        <form id="s3-upload-form" action="{presigned['url']}" method="post" enctype="multipart/form-data" target="upload-frame">
-            {''.join([f'<input type="hidden" name="{k}" value="{v}">' for k, v in presigned['fields'].items()])}
-            <div>
-                <label for="file-input" style="font-size: 16px;">📁 Choose GeoTIFF file:</label><br>
-                <input type="file" id="file-input" name="file" accept=".tif,.tiff" required />
-            </div>
-            <input type="submit" id="submit-btn" value="⬆️ Upload to S3" />
-        </form>
-        <iframe name="upload-frame" id="upload-frame"></iframe>
-        <div id="status" class="upload-status status-waiting">
-            📋 Select a file and click Upload to S3
-        </div>
-    </div>
+    <form id="s3-upload-form" action="{upload_url}" method="post" enctype="multipart/form-data">
+        {form_fields}
+        <input type="file" name="file" accept=".tif,.tiff" required />
+        <input type="submit" value="Upload to S3" />
+    </form>
     <script>
-        const form = document.getElementById('s3-upload-form');
-        const fileInput = document.getElementById('file-input');
-        const submitBtn = document.getElementById('submit-btn');
-        const status = document.getElementById('status');
-        const uploadFrame = document.getElementById('upload-frame');
-        
-        fileInput.addEventListener('change', function() {{
-            if (this.files.length > 0) {{
-                const fileName = this.files[0].name;
-                const fileSize = (this.files[0].size / 1024 / 1024).toFixed(2);
-                status.className = 'upload-status status-waiting';
-                status.innerHTML = `📄 Selected: ${{fileName}} (${{fileSize}} MB)<br>Click Upload to S3 to continue`;
-            }}
-        }});
-        
-        form.addEventListener('submit', function(e) {{
-            submitBtn.disabled = true;
-            status.className = 'upload-status status-uploading';
-            
-            // Estimate upload time based on file size
-            const fileSize = fileInput.files[0].size;
-            const fileSizeMB = fileSize / (1024 * 1024);
-            // Assume ~10 MB/sec upload speed, add 5 second buffer
-            const estimatedSeconds = Math.max(5, Math.ceil(fileSizeMB / 10)) + 5;
-            
-            status.innerHTML = `⏳ Uploading to S3... Estimated time: ${estimatedSeconds}s`;
-            
-            // Update progress indicator
-            let elapsed = 0;
-            const progressInterval = setInterval(function() {{
-                elapsed += 1;
-                const remaining = Math.max(0, estimatedSeconds - elapsed);
-                status.innerHTML = `⏳ Uploading to S3... ${remaining}s remaining`;
-                
-                if (elapsed >= estimatedSeconds) {{
-                    clearInterval(progressInterval);
-                    status.className = 'upload-status status-success';
-                    status.innerHTML = '✅ Upload complete! Redirecting...';
-                    setTimeout(function() {{
-                        window.top.location.href = window.top.location.pathname + '?uploaded=true';
-                    }}, 1000);
-                }}
-            }}, 1000);
-        }});
+        // Make the form visible
+        document.getElementById('s3-upload-form').style.display = 'block';
     </script>
     """
-    components.html(upload_html, height=280)
-
-    st.divider()
+    components.html(upload_html, height=120)
     
-    # Check if file was uploaded
-    # Add query param check for post-upload verification
-    query_params = st.query_params
-    if query_params.get("uploaded") == "true":
-        with st.spinner("🔍 Verifying file in S3..."):
+    st.divider()
+    st.write("**After uploading**, click the button below to verify the file is ready:")
+    
+    # Check button that user can click multiple times
+    if st.button("✅ Check if file is ready in S3"):
+        with st.spinner("🔍 Checking S3..."):
             import time
-            # Poll for file existence (S3 eventual consistency)
-            max_attempts = 10
-            for attempt in range(max_attempts):
+            # Try a few times with delays for eventual consistency
+            file_found = False
+            for attempt in range(5):
                 if check_s3_object_exists(direct_s3_key):
-                    st.success(f"✅ **File ready in S3!** Click 'Process DSM' below to continue.")
-                    # Clear the query param
-                    st.query_params.clear()
+                    file_found = True
                     break
-                time.sleep(1)
+                if attempt < 4:
+                    time.sleep(2)
+            
+            if file_found:
+                st.success(f"✅ **File is ready in S3!** You can now process it below.")
+                st.balloons()
             else:
-                st.error("❌ Could not verify file upload. Please try again or check your S3 bucket.")
-    elif check_s3_object_exists(direct_s3_key):
-        st.success(f"✅ **File ready in S3!** Click 'Process DSM' below to continue.")
-    else:
-        st.info("⏳ Waiting for file upload...")
+                st.error("❌ File not found in S3. Please verify upload completed and try again.")
 
 # Only show processing if we have a file
 can_process = uploaded_file is not None or (direct_s3_key is not None and check_s3_object_exists(direct_s3_key))
