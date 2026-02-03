@@ -244,38 +244,24 @@ else:
             status.className = 'upload-status status-uploading';
             status.innerHTML = '⏳ Uploading to S3... Please wait';
             
-            // Poll the hidden iframe for completion
-            let pollCount = 0;
-            const pollInterval = setInterval(function() {{
-                pollCount++;
-                try {{
-                    const frameContent = uploadFrame.contentDocument || uploadFrame.contentWindow.document;
-                    const frameText = frameContent.body ? frameContent.body.textContent : '';
-                    
-                    // Check if S3 responded (XML response contains these)
-                    if (frameText.includes('PostResponse') || 
-                        frameText.includes('ETag') ||
-                        frameText.includes('Location') ||
-                        pollCount > 60) {{
-                        clearInterval(pollInterval);
-                        status.className = 'upload-status status-success';
-                        status.innerHTML = '✅ Upload complete! Redirecting...';
-                        setTimeout(function() {{
-                            window.top.location.href = window.top.location.pathname + '?uploaded=true';
-                        }}, 1000);
-                    }}
-                }} catch (e) {{
-                    // Cross-origin issues - just timeout after 2 minutes
-                    if (pollCount > 60) {{
-                        clearInterval(pollInterval);
-                        status.className = 'upload-status status-success';
-                        status.innerHTML = '✅ Upload should be complete. Redirecting...';
-                        setTimeout(function() {{
-                            window.top.location.href = window.top.location.pathname + '?uploaded=true';
-                        }}, 1000);
-                    }}
-                }}
-            }}, 2000);  // Check every 2 seconds
+            // Listen for the iframe load event (S3 response)
+            uploadFrame.onload = function() {{
+                clearTimeout(pollTimeout);
+                status.className = 'upload-status status-success';
+                status.innerHTML = '✅ Upload complete! Redirecting...';
+                setTimeout(function() {{
+                    window.top.location.href = window.top.location.pathname + '?uploaded=true';
+                }}, 500);
+            }};
+            
+            // Fallback: timeout after 5 minutes just in case
+            let pollTimeout = setTimeout(function() {{
+                status.className = 'upload-status status-success';
+                status.innerHTML = '✅ Upload should be complete. Redirecting...';
+                setTimeout(function() {{
+                    window.top.location.href = window.top.location.pathname + '?uploaded=true';
+                }}, 500);
+            }}, 300000);  // 5 minutes
         }});
     </script>
     """
