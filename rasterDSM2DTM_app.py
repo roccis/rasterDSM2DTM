@@ -242,26 +242,31 @@ else:
         form.addEventListener('submit', function(e) {{
             submitBtn.disabled = true;
             status.className = 'upload-status status-uploading';
-            status.innerHTML = '⏳ Uploading to S3... Please wait';
             
-            // Listen for the iframe load event (S3 response)
-            uploadFrame.onload = function() {{
-                clearTimeout(pollTimeout);
-                status.className = 'upload-status status-success';
-                status.innerHTML = '✅ Upload complete! Redirecting...';
-                setTimeout(function() {{
-                    window.top.location.href = window.top.location.pathname + '?uploaded=true';
-                }}, 500);
-            }};
+            // Estimate upload time based on file size
+            const fileSize = fileInput.files[0].size;
+            const fileSizeMB = fileSize / (1024 * 1024);
+            // Assume ~10 MB/sec upload speed, add 5 second buffer
+            const estimatedSeconds = Math.max(5, Math.ceil(fileSizeMB / 10)) + 5;
             
-            // Fallback: timeout after 5 minutes just in case
-            let pollTimeout = setTimeout(function() {{
-                status.className = 'upload-status status-success';
-                status.innerHTML = '✅ Upload should be complete. Redirecting...';
-                setTimeout(function() {{
-                    window.top.location.href = window.top.location.pathname + '?uploaded=true';
-                }}, 500);
-            }}, 300000);  // 5 minutes
+            status.innerHTML = `⏳ Uploading to S3... Estimated time: ${estimatedSeconds}s`;
+            
+            // Update progress indicator
+            let elapsed = 0;
+            const progressInterval = setInterval(function() {{
+                elapsed += 1;
+                const remaining = Math.max(0, estimatedSeconds - elapsed);
+                status.innerHTML = `⏳ Uploading to S3... ${remaining}s remaining`;
+                
+                if (elapsed >= estimatedSeconds) {{
+                    clearInterval(progressInterval);
+                    status.className = 'upload-status status-success';
+                    status.innerHTML = '✅ Upload complete! Redirecting...';
+                    setTimeout(function() {{
+                        window.top.location.href = window.top.location.pathname + '?uploaded=true';
+                    }}, 1000);
+                }}
+            }}, 1000);
         }});
     </script>
     """
