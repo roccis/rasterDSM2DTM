@@ -108,16 +108,16 @@ if can_process:
 
             with tab1:
                 fig = create_mapbox_raster_figure(input_path, "DSM", MAPBOX_TOKEN)
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, use_container_width=True, config={'scrollZoom': True})
 
             with tab2:
                 fig = create_mapbox_raster_figure(dtm_path, "DTM", MAPBOX_TOKEN)
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, use_container_width=True, config={'scrollZoom': True})
 
             with tab3:
                 fig = create_mapbox_raster_figure(chm_path, "CHM", MAPBOX_TOKEN)
-                st.plotly_chart(fig, use_container_width=True)
-
+                st.plotly_chart(fig, use_container_width=True, config={'scrollZoom': True})
+            
             # Download buttons
             st.header("💾 Download Results")
             col1, col2 = st.columns(2)
@@ -139,12 +139,10 @@ if can_process:
                         file_name="chm.tif",
                         mime="image/tiff"
                     )
-        
         except Exception as e:
             st.error(f"❌ Error processing file: {str(e)}")
             import traceback
             st.error(traceback.format_exc())
-        
         finally:
             # Cleanup temporary files
             if 'input_path' in locals() and os.path.exists(input_path):
@@ -183,15 +181,15 @@ if can_process:
 
         with tab1:
             fig = create_mapbox_raster_figure(input_path, "DSM", MAPBOX_TOKEN)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, use_container_width=True, config={'scrollZoom': True})
 
         with tab2:
             fig = create_mapbox_raster_figure(dtm_path, "DTM", MAPBOX_TOKEN)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, use_container_width=True, config={'scrollZoom': True})
 
         with tab3:
             fig = create_mapbox_raster_figure(chm_path, "CHM", MAPBOX_TOKEN)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, use_container_width=True, config={'scrollZoom': True})
         
         # Download buttons
         st.header("💾 Download Results")
