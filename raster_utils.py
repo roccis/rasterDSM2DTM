@@ -43,22 +43,23 @@ def dsm_to_dtm_metric(input_path, output_path, search_radius_meters=10.0, max_pi
         
         # Calculate downsampling if needed to stay within memory limits
         downsample = 1
-        if total_pixels > max_pixels:
-            downsample = math.ceil(math.sqrt(total_pixels / max_pixels))
-            out_height = height // downsample
-            out_width = width // downsample
-            # Read with downsampling
-            dsm = src.read(
-                1,
-                out_shape=(out_height, out_width),
-                resampling=rasterio.enums.Resampling.average
-            )
-            # Update transform for downsampled raster
-            from rasterio.transform import Affine
-            affine = src.transform * Affine.scale(downsample, downsample)
-        else:
-            dsm = src.read(1)
-            affine = src.transform
+        # TEMPORARILY DISABLED FOR TESTING
+        # if total_pixels > max_pixels:
+        #     downsample = math.ceil(math.sqrt(total_pixels / max_pixels))
+        #     out_height = height // downsample
+        #     out_width = width // downsample
+        #     # Read with downsampling
+        #     dsm = src.read(
+        #         1,
+        #         out_shape=(out_height, out_width),
+        #         resampling=rasterio.enums.Resampling.average
+        #     )
+        #     # Update transform for downsampled raster
+        #     from rasterio.transform import Affine
+        #     affine = src.transform * Affine.scale(downsample, downsample)
+        # else:
+        dsm = src.read(1)
+        affine = src.transform
             
         crs = src.crs
         bounds = src.bounds
