@@ -170,6 +170,8 @@ def get_raster_data(raster_path, max_dim=2000):
 
 def raster_to_png_data_uri(data):
     """Convert raster array to a PNG data URI for Mapbox image layer.
+    
+    Nodata values (NaN) are rendered as transparent.
 
     Returns:
         tuple: (data_uri, vmin, vmax)
@@ -184,8 +186,14 @@ def raster_to_png_data_uri(data):
     scaled = np.zeros_like(data, dtype=np.uint8)
     scaled[valid_mask] = np.clip((data[valid_mask] - vmin) / (vmax - vmin) * 255, 0, 255).astype(np.uint8)
 
-    rgb = np.stack([scaled, scaled, scaled], axis=2)
-    img = Image.fromarray(rgb)
+    # Create RGBA with alpha channel for transparency
+    rgba = np.zeros((*data.shape, 4), dtype=np.uint8)
+    rgba[:, :, 0] = scaled  # Red channel
+    rgba[:, :, 1] = scaled  # Green channel
+    rgba[:, :, 2] = scaled  # Blue channel
+    rgba[:, :, 3] = np.where(valid_mask, 255, 0)  # Alpha: 255 for valid, 0 for nodata
+    
+    img = Image.fromarray(rgba, mode='RGBA')
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     encoded = base64.b64encode(buf.getvalue()).decode("utf-8")
