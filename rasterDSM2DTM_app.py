@@ -141,76 +141,14 @@ with st.sidebar:
 
 # Upload options
 st.subheader("📤 Upload DSM")
-upload_mode = st.radio(
-    "Choose upload method",
-    ["Direct to S3 (no 200MB limit)", "Upload via Streamlit"],
-    index=0,
+uploaded_file = st.file_uploader(
+    "Upload DSM GeoTIFF",
+    type=['tif', 'tiff'],
+    help="Upload a Digital Surface Model in GeoTIFF format"
 )
 
-uploaded_file = None
-direct_s3_key = None
-
-if upload_mode == "Upload via Streamlit":
-    uploaded_file = st.file_uploader(
-        "Upload DSM GeoTIFF",
-        type=['tif', 'tiff'],
-        help="Upload a Digital Surface Model in GeoTIFF format"
-    )
-else:
-    if "direct_s3_key" not in st.session_state:
-        session_id = f"{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}_{uuid.uuid4().hex[:8]}"
-        st.session_state.direct_s3_key = f"{bucket_prefix}/{session_id}/dsm.tif"
-
-    direct_s3_key = st.session_state.direct_s3_key
-    
-    st.markdown("**Upload directly to S3 (bypasses Streamlit size limit):**")
-    st.info("Open the link below in your browser to upload your file directly to S3")
-    
-    # Generate presigned POST
-    presigned = presigned_post(direct_s3_key)
-    
-    # Create a simple HTML form that opens in a new tab/window
-    upload_url = presigned['url']
-    form_fields = ''.join([f'<input type="hidden" name="{k}" value="{v}">' for k, v in presigned['fields'].items()])
-    
-    # Display the upload form as a simple link-based approach
-    upload_html = f"""
-    <form id="s3-upload-form" action="{upload_url}" method="post" enctype="multipart/form-data">
-        {form_fields}
-        <input type="file" name="file" accept=".tif,.tiff" required />
-        <input type="submit" value="Upload to S3" />
-    </form>
-    <script>
-        // Make the form visible
-        document.getElementById('s3-upload-form').style.display = 'block';
-    </script>
-    """
-    components.html(upload_html, height=120)
-    
-    st.divider()
-    st.write("**After uploading**, click the button below to verify the file is ready:")
-    
-    # Check button that user can click multiple times
-    if st.button("✅ Check if file is ready in S3"):
-        with st.spinner("🔍 Checking S3..."):
-            import time
-            # Try a few times with delays for eventual consistency
-            file_found = False
-            for attempt in range(5):
-                if check_s3_object_exists(direct_s3_key):
-                    file_found = True
-                    break
-                if attempt < 4:
-                    time.sleep(2)
-            
-            if file_found:
-                st.success(f"✅ **File is ready in S3!** You can now process it below.")
-                st.balloons()
-            else:
-                st.error("❌ File not found in S3. Please verify upload completed and try again.")
-
 # Only show processing if we have a file
-can_process = uploaded_file is not None or (direct_s3_key is not None and check_s3_object_exists(direct_s3_key))
+can_process = uploaded_file is not None
 
 if can_process:
     # Process button
@@ -219,16 +157,8 @@ if can_process:
         try:
             # Create temporary files and load data
             with tempfile.NamedTemporaryFile(delete=False, suffix='.tif') as tmp_input:
-                if uploaded_file is not None:
-                    tmp_input.write(uploaded_file.getvalue())
-                    input_path = tmp_input.name
-                else:
-                    input_path = tmp_input.name
-            
-            # Download from S3 if using direct upload
-            if uploaded_file is None and direct_s3_key is not None:
-                progress_bar.progress(10, "📥 Downloading file from S3...")
-                download_from_s3(direct_s3_key, input_path)
+                tmp_input.write(uploaded_file.getvalue())
+                input_path = tmp_input.name
             
             with tempfile.NamedTemporaryFile(delete=False, suffix='.tif') as tmp_output:
                 output_path = tmp_output.name
@@ -247,14 +177,11 @@ if can_process:
 
             # Upload original and outputs to S3
             progress_bar.progress(60, "☁️ Uploading results to S3...")
-            dsm_key = direct_s3_key or f"{bucket_prefix}/{session_id}/dsm.tif"
+            dsm_key = f"{bucket_prefix}/{session_id}/dsm.tif"
             dtm_key = f"{bucket_prefix}/{session_id}/dtm.tif"
             chm_key = f"{bucket_prefix}/{session_id}/chm.tif"
 
-            if uploaded_file is not None:
-                dsm_s3 = upload_to_s3(input_path, dsm_key, content_type="image/tiff")
-            else:
-                dsm_s3 = f"s3://{bucket_name}/{dsm_key}"
+            dsm_s3 = upload_to_s3(input_path, dsm_key, content_type="image/tiff")
             dtm_s3 = upload_to_s3(dtm_path, dtm_key, content_type="image/tiff")
             chm_s3 = upload_to_s3(chm_path, chm_key, content_type="image/tiff")
             
