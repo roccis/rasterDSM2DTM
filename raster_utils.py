@@ -33,10 +33,6 @@ def dsm_to_dtm_metric(input_path, output_path, search_radius_meters=10.0, max_pi
         height, width = src.height, src.width
         total_pixels = height * width
         
-        # Always read original DSM at full resolution for CHM calculation
-        dsm_original = src.read(1)
-        original_nodata = src.nodata if src.nodata is not None else -9999
-        
         # Calculate window size in pixels BEFORE downsampling (based on original resolution)
         # This ensures morphological filtering is consistent regardless of downsampling
         window_pixels = math.ceil(search_radius_meters / res_x)
@@ -91,34 +87,17 @@ def dsm_to_dtm_metric(input_path, output_path, search_radius_meters=10.0, max_pi
         with rasterio.open(output_path, 'w', **out_meta) as dst:
             dst.write(dtm, 1)
 
-        # Canopy Height Model (CHM) - computed at original DSM resolution
-        # If DTM was downsampled, upsample it back to original DSM resolution
-        if downsample > 1:
-            # Resample DTM back to original resolution
-            from rasterio.warp import reproject, Resampling
-            dtm_original = np.zeros_like(dsm_original, dtype=dtm.dtype)
-            reproject(
-                dtm,
-                dtm_original,
-                src_transform=affine,
-                dst_transform=src.transform,
-                src_crs=crs,
-                dst_crs=crs,
-                resampling=Resampling.bilinear
-            )
-        else:
-            dtm_original = dtm
-        
-        chm = dsm_original - dtm_original
-        chm[(dsm_original == original_nodata) | (dtm_original == nodata)] = original_nodata
+        # Canopy Height Model (CHM)
+        chm = dsm - dtm
+        chm[(dsm == nodata) | (dtm == nodata)] = nodata
 
         chm_path = output_path.replace('.tif', '_chm.tif')
-        original_meta = src.meta.copy()
-        original_meta.update(
-            dtype=chm.dtype,
-            nodata=original_nodata
-        )
-        with rasterio.open(chm_path, 'w', **original_meta) as dst:
+        with rasterio.open(
+            chm_path, 'w', driver='GTiff',
+            height=chm.shape[0], width=chm.shape[1],
+            count=1, dtype=chm.dtype,
+            crs=crs, transform=affine, nodata=nodata
+        ) as dst:
             dst.write(chm, 1)
 
         metadata = {
