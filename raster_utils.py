@@ -227,7 +227,7 @@ def create_mapbox_raster_figure(raster_path, title, mapbox_token, colorscale="Gr
             [east, south],
             [west, south]
         ],
-        "opacity": 0.7
+        "opacity": 1.0
     }
 
     fig = px.scatter_mapbox(
