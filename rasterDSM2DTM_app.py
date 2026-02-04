@@ -52,6 +52,10 @@ can_process = uploaded_file is not None
 if can_process:
     # Process button
     if st.button("🚀 Process DSM", type="primary"):
+        # Store processing state
+        st.session_state.processing = True
+    
+    if st.session_state.get('processing', False):
         progress_bar = st.progress(0, "Preparing...")
         try:
             # Create temporary files and load data
@@ -72,6 +76,16 @@ if can_process:
             
             progress_bar.progress(80, "🗺️ Generating visualizations...")
             
+            # Store results in session state to persist across reruns
+            st.session_state.processing_results = {
+                'input_path': input_path,
+                'dtm_path': dtm_path,
+                'chm_path': chm_path,
+                'metadata': metadata
+            }
+            
+            progress_bar.progress(100, "✅ Complete!")
+
             # Display metadata
             st.success("✅ Processing complete!")
             
@@ -103,8 +117,6 @@ if can_process:
             with tab3:
                 fig = create_mapbox_raster_figure(chm_path, "CHM", MAPBOX_TOKEN)
                 st.plotly_chart(fig, use_container_width=True)
-            
-            progress_bar.progress(100, "✅ Complete!")
 
             # Download buttons
             st.header("💾 Download Results")
@@ -127,7 +139,7 @@ if can_process:
                         file_name="chm.tif",
                         mime="image/tiff"
                     )
-                
+        
         except Exception as e:
             st.error(f"❌ Error processing file: {str(e)}")
             import traceback
@@ -141,5 +153,65 @@ if can_process:
                 os.unlink(output_path)
             if 'progress_bar' in locals():
                 progress_bar.empty()
-else:
+    
+    elif st.session_state.get('processing_results'):
+        # Show cached results if available
+        results = st.session_state.processing_results
+        metadata = results['metadata']
+        input_path = results['input_path']
+        dtm_path = results['dtm_path']
+        chm_path = results['chm_path']
+        
+        st.success("✅ Processing complete!")
+        
+        if metadata.get('downsampled', False):
+            st.warning(f"⚠️ Large raster was automatically downsampled by {metadata['downsample_factor']}x for processing to prevent memory issues. Original: {metadata['original_shape'][1]}x{metadata['original_shape'][0]} pixels, Processed: {metadata['shape'][1]}x{metadata['shape'][0]} pixels.")
+        
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Resolution", f"{metadata['resolution']:.2f}m")
+        with col2:
+            st.metric("Window (pixels)", metadata['window_pixels'])
+        with col3:
+            st.metric("Window (meters)", f"{metadata['window_meters']:.1f}m")
+        
+        # Visualization section
+        st.header("📊 Results Visualization")
+        st.info("Large rasters are automatically downsampled for display performance.")
+        
+        tab1, tab2, tab3 = st.tabs(["📍 DSM", "🏔️ DTM", "🌳 CHM"])
+
+        with tab1:
+            fig = create_mapbox_raster_figure(input_path, "DSM", MAPBOX_TOKEN)
+            st.plotly_chart(fig, use_container_width=True)
+
+        with tab2:
+            fig = create_mapbox_raster_figure(dtm_path, "DTM", MAPBOX_TOKEN)
+            st.plotly_chart(fig, use_container_width=True)
+
+        with tab3:
+            fig = create_mapbox_raster_figure(chm_path, "CHM", MAPBOX_TOKEN)
+            st.plotly_chart(fig, use_container_width=True)
+        
+        # Download buttons
+        st.header("💾 Download Results")
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            with open(dtm_path, 'rb') as f:
+                st.download_button(
+                    label="📥 Download DTM",
+                    data=f,
+                    file_name="dtm.tif",
+                    mime="image/tiff"
+                )
+        
+        with col2:
+            with open(chm_path, 'rb') as f:
+                st.download_button(
+                    label="📥 Download CHM",
+                    data=f,
+                    file_name="chm.tif",
+                    mime="image/tiff"
+                )
     st.info("👆 Upload a DSM GeoTIFF file to get started")

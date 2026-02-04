@@ -255,4 +255,12 @@ def create_mapbox_raster_figure(raster_path, title, mapbox_token, colorscale="Gr
         height=600,
         title=title,
     )
+    
+    # Enable scroll zoom for mapbox
+    fig.update_layout(
+        mapbox=dict(
+            scrollZoom=True
+        )
+    )
+    
     return fig
