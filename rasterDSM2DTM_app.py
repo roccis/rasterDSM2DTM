@@ -1,111 +1,10 @@
 import streamlit as st
 import tempfile
 import os
-import s3fs
-import boto3
-import uuid
-from datetime import datetime, timezone
-import streamlit.components.v1 as components
 from raster_utils import (
     dsm_to_dtm_metric,
     create_mapbox_raster_figure
 )
-
-s3_client = boto3.client('s3',aws_access_key_id = st.secrets["aws"]["access_key"], aws_secret_access_key = st.secrets["aws"]["secret_key"],region_name = st.secrets["aws"]["region"])
-fs = s3fs.S3FileSystem(key=st.secrets["aws"]["access_key"], secret=st.secrets["aws"]["secret_key"])
-bucket_name = st.secrets["aws"]["bucket_name"]
-bucket_prefix = st.secrets["aws"].get("prefix", "temp_rasters")
-expiry_days = int(st.secrets["aws"].get("expiry_days", 1))
-
-
-def ensure_lifecycle_rule(bucket, prefix, days):
-    rule_id = "rasterdsm2dtm-expire"
-    rule = {
-        "ID": rule_id,
-        "Filter": {"Prefix": f"{prefix}/"},
-        "Status": "Enabled",
-        "Expiration": {"Days": days},
-    }
-    try:
-        existing = s3_client.get_bucket_lifecycle_configuration(Bucket=bucket)
-        rules = existing.get("Rules", [])
-        if not any(r.get("ID") == rule_id for r in rules):
-            rules.append(rule)
-            s3_client.put_bucket_lifecycle_configuration(
-                Bucket=bucket,
-                LifecycleConfiguration={"Rules": rules},
-            )
-    except s3_client.exceptions.NoSuchBucket:
-        st.error(f"Bucket {bucket} does not exist")
-    except Exception as e:
-        # Silently skip lifecycle configuration if permissions denied
-        # This is optional and doesn't affect app functionality
-        error_code = e.response.get('Error', {}).get('Code', '') if hasattr(e, 'response') else ''
-        if error_code in ['NoSuchLifecycleConfiguration', 'AccessDenied']:
-            pass  # Skip silently - lifecycle config is optional
-        else:
-            st.warning(f"Could not set lifecycle rule: {e}")
-
-
-def upload_to_s3(local_path, key, content_type="application/octet-stream"):
-    try:
-        # Try with tagging first
-        tagging = f"app=rasterdsm2dtm&delete_after_days={expiry_days}"
-        s3_client.upload_file(
-            local_path,
-            bucket_name,
-            key,
-            ExtraArgs={
-                "ContentType": content_type,
-                "Tagging": tagging,
-            },
-        )
-    except Exception as e:
-        # If tagging fails (permission denied), upload without tags
-        if "PutObjectTagging" in str(e) or "AccessDenied" in str(e):
-            s3_client.upload_file(
-                local_path,
-                bucket_name,
-                key,
-                ExtraArgs={
-                    "ContentType": content_type,
-                },
-            )
-        else:
-            raise e
-    return f"s3://{bucket_name}/{key}"
-
-
-def presigned_url(key, expires=3600):
-    return s3_client.generate_presigned_url(
-        "get_object",
-        Params={"Bucket": bucket_name, "Key": key},
-        ExpiresIn=expires,
-    )
-
-
-def presigned_post(key, expires=900):
-    return s3_client.generate_presigned_post(
-        Bucket=bucket_name,
-        Key=key,
-        ExpiresIn=expires,
-        Conditions=[
-            ["content-length-range", 1, 10_000_000_000],
-        ],
-    )
-
-
-def download_from_s3(key, local_path):
-    s3_client.download_file(bucket_name, key, local_path)
-
-
-def check_s3_object_exists(key):
-    """Check if an object exists in S3"""
-    try:
-        s3_client.head_object(Bucket=bucket_name, Key=key)
-        return True
-    except:
-        return False
 
 # Streamlit App
 st.set_page_config(page_title="DSM to DTM Converter", layout="wide")
@@ -162,10 +61,6 @@ if can_process:
             
             with tempfile.NamedTemporaryFile(delete=False, suffix='.tif') as tmp_output:
                 output_path = tmp_output.name
-            
-            progress_bar.progress(20, "⚙️ Setting up S3...")
-            ensure_lifecycle_rule(bucket_name, bucket_prefix, expiry_days)
-            session_id = f"{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}_{uuid.uuid4().hex[:8]}"
 
             # Process the DSM
             progress_bar.progress(30, f"🔄 Processing DSM (window={window_size}m)... This may take several minutes for large files.")
@@ -174,16 +69,6 @@ if can_process:
                 output_path, 
                 search_radius_meters=window_size
             )
-
-            # Upload original and outputs to S3
-            progress_bar.progress(60, "☁️ Uploading results to S3...")
-            dsm_key = f"{bucket_prefix}/{session_id}/dsm.tif"
-            dtm_key = f"{bucket_prefix}/{session_id}/dtm.tif"
-            chm_key = f"{bucket_prefix}/{session_id}/chm.tif"
-
-            dsm_s3 = upload_to_s3(input_path, dsm_key, content_type="image/tiff")
-            dtm_s3 = upload_to_s3(dtm_path, dtm_key, content_type="image/tiff")
-            chm_s3 = upload_to_s3(chm_path, chm_key, content_type="image/tiff")
             
             progress_bar.progress(80, "🗺️ Generating visualizations...")
             
@@ -221,16 +106,6 @@ if can_process:
             
             progress_bar.progress(100, "✅ Complete!")
 
-            st.subheader("☁️ Stored in S3")
-            st.write(f"DSM: {dsm_s3}")
-            st.write(f"DTM: {dtm_s3}")
-            st.write(f"CHM: {chm_s3}")
-
-            st.subheader("🔗 Temporary download links")
-            st.write(presigned_url(dsm_key))
-            st.write(presigned_url(dtm_key))
-            st.write(presigned_url(chm_key))
-            
             # Download buttons
             st.header("💾 Download Results")
             col1, col2 = st.columns(2)
