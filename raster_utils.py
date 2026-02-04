@@ -14,7 +14,7 @@ import base64
 import io
 
 
-def dsm_to_dtm_metric(input_path, output_path, search_radius_meters=10.0, max_pixels=15000000):
+def dsm_to_dtm_metric(input_path, output_path, search_radius_meters=10.0):
     """
     Derives a DTM from a DSM using a metric window size.
     
@@ -22,7 +22,6 @@ def dsm_to_dtm_metric(input_path, output_path, search_radius_meters=10.0, max_pi
         input_path: Path to DSM geotiff
         output_path: Path to save DTM geotiff
         search_radius_meters: The physical width of the largest object to remove
-        max_pixels: Maximum number of pixels to process (default 15M = ~3873x3873)
         
     Returns:
         tuple: (dtm_path, chm_path, metadata_dict)
@@ -31,33 +30,15 @@ def dsm_to_dtm_metric(input_path, output_path, search_radius_meters=10.0, max_pi
         # Get pixel resolution (assuming square pixels in meters)
         res_x, res_y = src.res 
         height, width = src.height, src.width
-        total_pixels = height * width
         
-        # Calculate window size in pixels BEFORE downsampling (based on original resolution)
-        # This ensures morphological filtering is consistent regardless of downsampling
+        # Calculate window size in pixels (based on original resolution)
         window_pixels = math.ceil(search_radius_meters / res_x)
         
         # Ensure window_pixels is odd for a centered kernel
         if window_pixels % 2 == 0:
             window_pixels += 1
         
-        # Calculate downsampling if needed to stay within memory limits
-        downsample = 1
-        # TEMPORARILY DISABLED FOR TESTING
-        # if total_pixels > max_pixels:
-        #     downsample = math.ceil(math.sqrt(total_pixels / max_pixels))
-        #     out_height = height // downsample
-        #     out_width = width // downsample
-        #     # Read with downsampling
-        #     dsm = src.read(
-        #         1,
-        #         out_shape=(out_height, out_width),
-        #         resampling=rasterio.enums.Resampling.average
-        #     )
-        #     # Update transform for downsampled raster
-        #     from rasterio.transform import Affine
-        #     affine = src.transform * Affine.scale(downsample, downsample)
-        # else:
+        # Read at full resolution
         dsm = src.read(1)
         affine = src.transform
             
@@ -107,10 +88,7 @@ def dsm_to_dtm_metric(input_path, output_path, search_radius_meters=10.0, max_pi
             'window_meters': search_radius_meters,
             'bounds': bounds,
             'crs': str(crs),
-            'shape': dsm.shape,
-            'original_shape': (height, width),
-            'downsampled': downsample > 1,
-            'downsample_factor': downsample
+            'shape': dsm.shape
         }
 
         return output_path, chm_path, metadata

@@ -89,8 +89,8 @@ if can_process:
             # Display metadata
             st.success("✅ Processing complete!")
             
-            if metadata.get('downsampled', False):
-                st.warning(f"⚠️ Large raster was automatically downsampled by {metadata['downsample_factor']}x for processing to prevent memory issues. Original: {metadata['original_shape'][1]}x{metadata['original_shape'][0]} pixels, Processed: {metadata['shape'][1]}x{metadata['shape'][0]} pixels.")
+            # if metadata.get('downsampled', False):
+            #     st.warning(f"⚠️ Large raster was automatically downsampled by {metadata['downsample_factor']}x for processing to prevent memory issues. Original: {metadata['original_shape'][1]}x{metadata['original_shape'][0]} pixels, Processed: {metadata['shape'][1]}x{metadata['shape'][0]} pixels.")
             
             col1, col2, col3 = st.columns(3)
             with col1:
@@ -161,9 +161,6 @@ if can_process:
         chm_path = results['chm_path']
         
         st.success("✅ Processing complete!")
-        
-        if metadata.get('downsampled', False):
-            st.warning(f"⚠️ Large raster was automatically downsampled by {metadata['downsample_factor']}x for processing to prevent memory issues. Original: {metadata['original_shape'][1]}x{metadata['original_shape'][0]} pixels, Processed: {metadata['shape'][1]}x{metadata['shape'][0]} pixels.")
         
         col1, col2, col3 = st.columns(3)
         with col1:
